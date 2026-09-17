@@ -325,7 +325,8 @@ Ela mede quanto de probabilidade adicional de premiação cada marcação extra 
 
 ## Função objetivo atual
 
-O otimizador atual usa uma função aditiva para permitir programação dinâmica eficiente.
+O otimizador usa uma função aditiva para preservar os melhores candidatos de
+cada estado durante a programação dinâmica.
 
 Por seleção, a contribuição principal é aproximadamente:
 
@@ -335,19 +336,22 @@ log(cobertura)
 - penalidade pela vitória do Palmeiras
 ```
 
-Ao final, também é aplicada penalização pelo desvio em relação à meta `9/6/6`.
+Ao final, os candidatos completos são reranqueados pela distribuição exata de
+acertos conforme o objetivo selecionado. Também são aplicadas penalizações leves
+pelo desvio da meta `9/6/6` e pela preferência relativa ao Palmeiras.
 
 Portanto:
 
-> **P(13+), P(14) e P(12+) são calculadas exatamente para avaliar o bilhete, mas o otimizador ainda não maximiza diretamente essas probabilidades.**
+> **P(13+), P(14) e P(12+) são calculadas exatamente e podem determinar
+> diretamente a escolha final entre os candidatos preservados pela DP.**
 
 ---
 
-## Próxima arquitetura de otimização: DP Top-N + reranqueamento exato
+## Arquitetura de otimização: DP Top-N + reranqueamento exato
 
-A principal evolução planejada é deixar de manter apenas **um** candidato por estado da programação dinâmica.
+Cada estado pode preservar os melhores `N` candidatos da programação dinâmica.
 
-Em vez disso, cada estado poderá preservar os melhores `N` candidatos segundo o score aditivo intermediário:
+Cada estado preserva os melhores `N` candidatos segundo o score aditivo intermediário:
 
 ```text
 N = 20
@@ -845,6 +849,17 @@ Também é possível informar outro arquivo:
 python main.py caminho/do/concurso.csv --output caminho/do/bilhete.csv
 ```
 
+O objetivo exato, a largura da busca e a quantidade de alternativas exibidas
+podem ser configurados sem alterar o código:
+
+```bash
+python main.py --objective p13plus --top-n 50 --alternatives 3
+```
+
+Os objetivos disponíveis são `p14`, `p13plus`, `p12plus` e `balanced`. O arquivo
+de saída sempre contém o candidato vencedor; `--alternatives` acrescenta ao
+terminal a comparação das soluções quase ótimas preservadas pela busca.
+
 ---
 
 ## Telemetria
@@ -905,18 +920,18 @@ Solução válida: SIM
 - telemetria de entropia, gaps e cobertura;
 - análise de runs e concentração dos top1;
 - auditoria automática do bilhete.
+- DP Top-N configurável com reranqueamento pela distribuição exata de acertos;
+- objetivos `p14`, `p13plus`, `p12plus` e `balanced`;
+- exibição de múltiplas soluções quase ótimas.
 
 ### Próximas prioridades
 
-1. **DP Top-N + reranqueamento exato**;
-2. comparação de objetivos `p14`, `p13plus`, `p12plus` e `balanced`;
-3. custo de oportunidade dos soft constraints;
-4. custo de diversificação por `max_run`;
-5. análise marginal / contrafactual;
-6. múltiplas soluções quase ótimas;
-7. baseline combinatório correto para concentração de top1;
-8. backtest walk-forward;
-9. ablation tests.
+1. custo de oportunidade dos soft constraints;
+2. custo de diversificação por `max_run`;
+3. análise marginal / contrafactual;
+4. baseline combinatório correto para concentração de top1;
+5. backtest walk-forward;
+6. ablation tests.
 
 ### Evoluções posteriores
 
@@ -945,4 +960,6 @@ O foco é encontrar a combinação de 21 marcações que produza o melhor bilhet
 
 🚧 **Em desenvolvimento ativo.**
 
-O projeto já gera bilhetes válidos, calcula a distribuição probabilística de acertos e fornece telemetria suficiente para auditoria estrutural. A principal próxima evolução é ampliar a busca com **DP Top-N + reranqueamento exato**, permitindo escolher o bilhete final pelas métricas globais que realmente importam.
+O projeto já gera bilhetes válidos, calcula a distribuição probabilística de acertos,
+amplia a busca com **DP Top-N + reranqueamento exato** e fornece telemetria para
+auditoria estrutural e comparação das métricas globais que realmente importam.
