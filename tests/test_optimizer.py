@@ -5,7 +5,9 @@ from scripts.common import rank_probabilities, read_matches
 from scripts.constraints import constraint_errors, team_win
 from scripts.metrics import hit_distribution, probability_at_least
 from scripts.historical_patterns import historical_top1_runs, run_stats, ticket_top1_runs
-from scripts.optimize_ticket import TARGET_RANKS, TARGET_SIZES, counts, optimize, report, validate
+from scripts.optimize_ticket import (
+    TARGET_RANKS, TARGET_SIZES, counts, optimize, optimize_candidates, report, validate,
+)
 
 
 class OptimizerTest(unittest.TestCase):
@@ -14,7 +16,7 @@ class OptimizerTest(unittest.TestCase):
         self.assertEqual(rank_probabilities({"1": 1/3, "X": 1/3, "2": 1/3}), ("1", "2", "X"))
 
     def test_generated_ticket_obeys_hard_constraints(self):
-        ticket = optimize(read_matches("data/proximo_concurso.csv"))
+        ticket = optimize(read_matches("data/proximo_concurso.csv"), top_n=1)
         validate(ticket)
         sizes, ranks, _ = counts(ticket)
         self.assertEqual(sizes, TARGET_SIZES)
@@ -24,7 +26,7 @@ class OptimizerTest(unittest.TestCase):
         self.assertGreaterEqual(ticket.probability_at_least(13), ticket.probability_at_least(14))
 
     def test_independent_validator_detects_each_structural_violation(self):
-        ticket = optimize(read_matches("data/proximo_concurso.csv"))
+        ticket = optimize(read_matches("data/proximo_concurso.csv"), top_n=1)
         broken = list(ticket.selections)
         broken[0] = frozenset()
         errors = constraint_errors(ticket.matches, broken)
@@ -62,7 +64,7 @@ class OptimizerTest(unittest.TestCase):
         self.assertGreaterEqual(history.tail_probability(1), 0.0)
         self.assertLessEqual(history.tail_probability(1), 1.0)
 
-        ticket = optimize(read_matches("data/proximo_concurso.csv"))
+        ticket = optimize(read_matches("data/proximo_concurso.csv"), top_n=1)
         numbers, sequence, stats = ticket_top1_runs(ticket.matches, ticket.selections)
         self.assertEqual(len(numbers), 14)
         self.assertEqual(sum(sequence), 10)
@@ -71,6 +73,24 @@ class OptimizerTest(unittest.TestCase):
         self.assertIn("DISTRIBUIÇÃO TOP1", telemetry)
         self.assertIn("P histórico(max_run >= atual)", telemetry)
         self.assertIn("E[acertos]", telemetry)
+
+    def test_top_n_candidates_are_valid_and_use_exact_objective(self):
+        candidates = optimize_candidates(
+            read_matches("data/proximo_concurso.csv"), objective="p12plus", top_n=2,
+        )
+        self.assertGreater(len(candidates), 1)
+        self.assertGreaterEqual(candidates[0].score, candidates[1].score)
+        for ticket in candidates[:5]:
+            validate(ticket)
+            self.assertEqual(ticket.objective, "p12plus")
+            self.assertAlmostEqual(ticket.objective_value, ticket.probability_at_least(12))
+
+    def test_optimizer_rejects_invalid_search_configuration(self):
+        matches = read_matches("data/proximo_concurso.csv")
+        with self.assertRaisesRegex(ValueError, "Objetivo desconhecido"):
+            optimize(matches, objective="inexistente", top_n=1)
+        with self.assertRaisesRegex(ValueError, "top_n"):
+            optimize(matches, top_n=0)
 
 
 if __name__ == "__main__":
