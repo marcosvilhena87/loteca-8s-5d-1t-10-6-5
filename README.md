@@ -469,4 +469,15 @@ A segunda pergunta é o núcleo da otimização.
 
 🚧 **Em desenvolvimento.**
 
-A estrutura de dados já está disponível no repositório. Os módulos de processamento, modelagem e otimização ainda serão implementados e validados progressivamente.
+A estrutura de dados e o otimizador global já estão disponíveis. Para gerar o bilhete e sua
+telemetria auditável:
+
+```bash
+python main.py
+```
+
+O resultado é salvo em `output/ticket.csv`. Um arquivo diferente pode ser analisado com
+`python main.py caminho/do/concurso.csv --output caminho/do/bilhete.csv`. O otimizador usa
+programação dinâmica para considerar conjuntamente as marcações e descarta qualquer estado
+que não possa atingir `8/5/1` e `10/6/5`; a distribuição `9/6/6` e a exclusão da vitória do
+Palmeiras permanecem preferências penalizadas, nunca hard constraints.
