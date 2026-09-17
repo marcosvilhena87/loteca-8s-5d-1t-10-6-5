@@ -259,6 +259,7 @@ São calculadas atualmente:
 ```text
 P(14)
 P(13+)
+P(12+)
 ```
 
 A implementação usa programação dinâmica sobre as probabilidades de acerto de cada jogo.
@@ -350,6 +351,8 @@ As colunas de resultado real permanecem zeradas até a realização das partidas
 │
 ├── scripts/
 │   ├── common.py
+│   ├── constraints.py
+│   ├── metrics.py
 │   ├── preprocess_data.py
 │   ├── train_model.py
 │   ├── predict_results.py
@@ -431,6 +434,7 @@ Ao final:
 [OK/INFO] Vitória do Palmeiras excluída ou incluída com penalização
 P(14)=...
 P(13+)=...
+P(12+)=...
 Solução válida: SIM
 ```
 
@@ -590,7 +594,7 @@ Isso permite escolher entre alternativas estatisticamente semelhantes usando os 
 
 ## Validador independente
 
-Além da validação interna do otimizador, é desejável manter um validador independente que confirme:
+Além da validação executada ao final da otimização, o módulo `constraints.py` confere de forma independente:
 
 ```text
 14 jogos
@@ -671,12 +675,13 @@ Isso facilita backtests e comparação de estratégias sem alterar o código-fon
 - [x] auditoria final;
 - [x] cálculo exato de `P(14)`;
 - [x] cálculo exato de `P(13+)`;
+- [x] cálculo e exibição de `P(12+)`;
+- [x] validador independente das hard constraints;
 - [x] exportação para `output/ticket.csv`.
 
 ### Próximas prioridades
 
 - [ ] análise marginal de secos, duplos e triplo;
-- [ ] cálculo e exibição de `P(12+)`;
 - [ ] custo absoluto e relativo dos soft constraints;
 - [ ] otimização mais diretamente orientada a `P(13+)`;
 - [ ] backtest walk-forward;
