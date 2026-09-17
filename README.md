@@ -294,7 +294,7 @@ A pergunta deixa de ser apenas "qual resultado tem maior probabilidade?" e passa
 
 ## Probabilidade do bilhete
 
-O projeto já calcula exatamente, sem Monte Carlo, a distribuição de acertos do bilhete a partir da cobertura de cada partida.
+O projeto calcula exatamente, sem Monte Carlo, a distribuição de acertos do bilhete a partir da cobertura de cada partida.
 
 São calculadas atualmente:
 
@@ -302,19 +302,14 @@ São calculadas atualmente:
 P(14)
 P(13+)
 P(12+)
-```
-
-A implementação usa programação dinâmica sobre as probabilidades de acerto de cada jogo.
-
-Uma evolução natural é exibir também:
-
-```text
-E[acertos]
 P(11+)
 P(10+)
+E[acertos]
 moda da distribuição
 desvio-padrão
 ```
+
+A implementação usa programação dinâmica sobre as probabilidades de acerto de cada jogo.
 
 ### Valor da cobertura
 
@@ -346,64 +341,165 @@ Portanto:
 
 > **P(13+), P(14) e P(12+) são calculadas exatamente para avaliar o bilhete, mas o otimizador ainda não maximiza diretamente essas probabilidades.**
 
-Entre as evoluções prioritárias estão:
+---
 
-- otimização orientada diretamente a `P(13+)`;
-- custo de oportunidade dos soft constraints;
-- penalidade histórica para runs de top1;
-- robustez a pequenas perturbações nas probabilidades.
+## Próxima arquitetura de otimização: DP Top-N + reranqueamento exato
+
+A principal evolução planejada é deixar de manter apenas **um** candidato por estado da programação dinâmica.
+
+Em vez disso, cada estado poderá preservar os melhores `N` candidatos segundo o score aditivo intermediário:
+
+```text
+N = 20
+N = 50
+N = 100
+```
+
+Ao final, todos os candidatos válidos serão reranqueados usando métricas globais calculadas exatamente:
+
+```text
+P(14)
+P(13+)
+P(12+)
+P(11+)
+E[acertos]
+max_run
+concentração de top1
+custo dos soft constraints
+```
+
+A ideia é evitar que um bilhete com ótimo `P(13+)` seja descartado cedo apenas porque teve score local ligeiramente inferior durante a DP.
+
+### Fluxo desejado
+
+```text
+1. DP gera candidatos válidos
+2. Cada estado preserva Top-N soluções
+3. Hard constraints continuam invioláveis
+4. Finalistas recebem métricas globais exatas
+5. Finalistas são reranqueados pela função objetivo real
+6. O melhor bilhete e alternativas quase ótimas são exibidos
+```
+
+Essa abordagem mantém boa eficiência computacional e aproxima o projeto da otimização direta das métricas realmente importantes.
 
 ---
 
-## Dados
+## Comparação de objetivos
 
-### `data/concursos_anteriores.csv`
+O projeto deve permitir comparar diferentes objetivos para o mesmo concurso.
 
-Base histórica utilizada para análise, treinamento, calibração e backtests.
-
-Colunas disponíveis incluem:
+Exemplos:
 
 ```text
-Concurso
-Jogo
-Mandante
-Visitante
-Data
-1
-X
-2
-p(1)
-p(x)
-p(2)
-p(top1)
-p(top2)
-p(top3)
-top1
-top2
-top3
+--objective p14
+--objective p13plus
+--objective p12plus
+--objective balanced
 ```
 
-Nos concursos concluídos, as colunas `1`, `X` e `2` representam o resultado real em formato One-Hot.
+Uma formulação balanceada possível é:
 
-### `data/proximo_concurso.csv`
+```text
+Score =
+    w12 * P(12+)
+  + w13 * P(13+)
+  + w14 * P(14)
+  - penalidades_soft
+```
 
-Contém as partidas e probabilidades estimadas do concurso a ser analisado.
+A telemetria deve mostrar os trade-offs entre os objetivos.
 
-As colunas de resultado real permanecem zeradas até a realização das partidas.
+Exemplo:
+
+```text
+Estratégia     P(14)      P(13+)     P(12+)
+p14            0.121%     1.12%      5.31%
+p13plus        0.114%     1.18%      5.58%
+balanced       0.117%     1.16%      5.62%
+```
+
+---
+
+## Soft constraints por custo máximo
+
+Uma evolução importante é substituir pesos arbitrários por regras baseadas em custo de oportunidade.
+
+Exemplo para o Palmeiras:
+
+```text
+Aplicar preferência de excluir vitória do Palmeiras
+somente se o custo relativo em P(13+) <= 2%
+```
+
+O mesmo princípio pode ser aplicado a:
+
+- meta `9/6/6`;
+- limite de `max_run`;
+- concentração de top1;
+- outras preferências estratégicas.
+
+Fórmula:
+
+```text
+custo_relativo =
+(P13_otimo - P13_alternativo) / P13_otimo
+```
+
+---
+
+## Custo de diversificação
+
+A dispersão dos top1 deve ser tratada como um trade-off mensurável.
+
+O projeto deve comparar automaticamente variantes como:
+
+```text
+sem limite de max_run
+max_run <= 7
+max_run <= 6
+max_run <= 5
+```
+
+Para cada cenário, exibir:
+
+```text
+P(14)
+P(13+)
+P(12+)
+max_run
+concentração
+custo absoluto
+custo relativo
+```
+
+Isso permite decidir se a diversificação é barata ou se destrói qualidade probabilística.
+
+---
+
+## Baseline correto para concentração de top1
+
+A concentração estrutural do bilhete e o padrão histórico de `top1_hit` são fenômenos diferentes.
+
+### Estrutura do bilhete
+
+O bilhete possui obrigatoriamente exatamente **10 top1 em 14 posições**.
+
+Portanto, `max_run`, `mean_run`, `n_runs` e concentração devem ser comparados com um baseline combinatório condicionado a exatamente 10 marcações top1.
+
+### Histórico dos resultados
+
+Os concursos históricos devem analisar separadamente a sequência de `top1_hit`, cuja quantidade varia livremente de concurso para concurso.
+
+A telemetria deve evitar comparar diretamente essas duas distribuições.
 
 ---
 
 ## Análise histórica das sequências de top1
 
-Uma implementação planejada é transformar cada concurso histórico em uma sequência binária após ordenar os jogos por `p(top1)` decrescente.
+Para cada concurso histórico, os jogos podem ser ordenados por `p(top1)` decrescente e transformados em sequências binárias.
 
-Exemplo:
-
-```text
-1 1 0 1 1 1 0 0 1 0 1 0 0 1
-```
-
-A partir dela podem ser calculadas:
+Podem ser calculadas:
 
 ```text
 max_run
@@ -412,74 +508,19 @@ n_runs
 run_concentration = Σ Lr²
 ```
 
-Também deve ser comparada a sequência de:
+Também devem ser analisados separadamente:
 
 1. **top1 presente no bilhete**;
-2. **seco em top1**.
+2. **seco em top1**;
+3. **top1_hit histórico**.
 
-Esses dois fenômenos não são equivalentes e devem ser avaliados separadamente no backtest.
-
-A regra de dispersão só deve ser mantida se apresentar ganho fora da amostra ou funcionar como regularização útil sem custo relevante em probabilidade.
-
----
-
-## Telemetria
-
-Para cada partida, o terminal deve exibir pelo menos:
-
-```text
-JOGO 03 — TIME A x TIME B
-Probabilidades: 1=0.4012 X=0.3041 2=0.2946
-Ranking: top1=1 top2=X top3=2
-Entropia=1.088 gap12=0.0971 gap23=0.0095
-Escolha=X2 Tipo=DUPLO Cobertura=0.5988
-```
-
-Ao final:
-
-```text
-=========== AUDITORIA FINAL ===========
-[OK] 8 secos, 5 duplos, 1 triplo, 21 marcações
-[OK] top1=10, top2=6, top3=5
-[OK/INFO] 1/X/2=... (alvo 9/6/6)
-[OK] Vitória do Flamengo incluída quando aplicável
-[OK/INFO] Vitória do Palmeiras excluída ou incluída com penalização
-P(14)=...
-P(13+)=...
-P(12+)=...
-Solução válida: SIM
-```
-
-### Telemetria planejada para dispersão top1
-
-```text
-=========== DISTRIBUIÇÃO TOP1 ===========
-
-Jogos ordenados por p(top1):
-05 01 02 07 09 08 12 11 14 04 03 13 10 06
-
-Top1 presente:
- 1  1  1  1  0  1  1  1  0  1  0  1  0  1
-
-Runs: 4 / 3 / 1 / 1 / 1
-Maior sequência: 4
-Média das sequências: 2.00
-Concentração: 28
-Penalidade de run: ...
-```
-
-Quando disponível, a telemetria também deve comparar o bilhete com o histórico:
-
-```text
-mediana histórica max_run = ...
-P(max_run >= atual) = ...
-```
+A regra de dispersão só deve ser mantida se demonstrar utilidade fora da amostra ou regularização útil com baixo custo probabilístico.
 
 ---
 
-## Análise marginal
+## Análise marginal e contrafactual
 
-A telemetria deve evoluir para mostrar não apenas qual solução venceu, mas também quanto custariam as alternativas.
+A telemetria deve mostrar não apenas qual solução venceu, mas também quanto custariam as alternativas.
 
 Exemplo:
 
@@ -496,39 +537,137 @@ Motivo de não selecionar:
 - violaria a distribuição 10/6/5
 ```
 
-O mesmo princípio deve ser aplicado ao triplo, à preferência contra o Palmeiras, à meta `9/6/6` e à quebra de runs de top1.
+O mesmo princípio deve ser aplicado a:
+
+- posição do triplo;
+- cada duplo;
+- exclusão do Palmeiras;
+- meta `9/6/6`;
+- quebra de sequências de top1.
 
 ---
 
-## Custo de oportunidade dos soft constraints
+## Classificação do motivo de cada decisão
 
-As preferências devem se tornar auditáveis em termos de perda real de probabilidade.
+Cada escolha deve poder informar seu motivo predominante.
 
-```text
-Melhor solução sem preferência:
-P(13+) = 1.1820%
-
-Melhor solução com preferência:
-P(13+) = 1.1630%
-
-Custo absoluto = -0.0190 p.p.
-Custo relativo = -1.61%
-```
-
-Fórmula:
+Exemplo:
 
 ```text
-custo_relativo =
-(P13_otimo - P13_alternativo) / P13_otimo
+J01 — seco 1
+Motivo principal: probabilidade muito alta
+Hard constraint Flamengo: SIM
+
+J13 — triplo 1X2
+Motivo principal: alta incerteza
+Entropia: alta
+Influência 10/6/5: moderada
 ```
 
-Isso permitirá substituir penalizações arbitrárias por regras condicionadas ao custo real.
+Isso torna a telemetria mais explicativa e ajuda a identificar quando uma marcação foi escolhida pela probabilidade ou apenas para fechar constraints.
 
 ---
 
-## Validação histórica
+## Múltiplas soluções quase ótimas
 
-A validação deve ser feita prioritariamente por **backtest temporal / walk-forward**.
+O sistema não deve retornar apenas um único bilhete quando existirem alternativas estatisticamente próximas.
+
+Exemplo:
+
+```text
+#1 P(13+) = 1.1631%
+#2 P(13+) = 1.1618%
+#3 P(13+) = 1.1609%
+```
+
+Isso permite preferir uma solução ligeiramente inferior em probabilidade quando ela apresenta vantagens relevantes em robustez ou soft constraints.
+
+---
+
+## Fronteira de Pareto
+
+Uma evolução posterior é identificar bilhetes não dominados considerando simultaneamente:
+
+```text
+P(14)
+P(13+)
+P(12+)
+concentração de top1
+soft constraints
+robustez
+```
+
+Exemplo:
+
+```text
+A — maior P(13+)
+B — -0,4% relativo em P(13+), mas max_run cai de 9 para 5
+C — -0,8%, exclui Palmeiras e mantém 9/6/6
+```
+
+A fronteira de Pareto evita comprimir todas as preferências em um único peso arbitrário.
+
+---
+
+## Robustez das probabilidades
+
+O bilhete não deve depender excessivamente de diferenças mínimas entre probabilidades.
+
+Uma análise planejada é perturbar `p(1)`, `p(X)` e `p(2)` dentro de margens plausíveis e regenerar o bilhete.
+
+Para cada jogo, registrar:
+
+```text
+frequência de cada marcação
+estabilidade do seco
+estabilidade dos duplos
+estabilidade do triplo
+```
+
+Exemplo:
+
+```text
+J01 — 99% das perturbações mantêm 1
+J06 — 54% usam 1X, 31% usam 12, 15% usam X2
+```
+
+Esse indicador ajuda a distinguir escolhas sólidas de decisões marginais.
+
+---
+
+## Ablation tests dos soft constraints
+
+Cada soft constraint deve provar seu valor fora da amostra.
+
+O backtest deve comparar incrementalmente:
+
+```text
+baseline
++ entropia
++ preferência Palmeiras
++ meta 9/6/6
++ dispersão de top1
++ robustez
+```
+
+Também deve rodar versões removendo uma regra por vez.
+
+Métricas de comparação:
+
+```text
+média de acertos
+P(12+) realizada
+P(13+) realizada
+frequência de 12+
+frequência de 13+
+frequência de 14
+```
+
+Se um soft constraint não produzir ganho consistente fora da amostra, seu peso deve ser reduzido ou zerado.
+
+---
+
+## Validação histórica / walk-forward
 
 Para cada concurso histórico:
 
@@ -540,71 +679,118 @@ Para cada concurso histórico:
 
 Nenhuma informação posterior ao concurso avaliado pode participar do treinamento ou da calibração.
 
-### Métricas de interesse
-
-- média de acertos;
-- frequência de 14 pontos;
-- frequência de 13+;
-- frequência de 12+;
-- frequência de 11+;
-- `P(14)` prevista;
-- `P(13+)` prevista;
-- Brier Score;
-- Log Loss;
-- ECE / calibração;
-- frequência de `top1_hit`, `top2_hit`, `top3_hit`;
-- desempenho por faixa de probabilidade;
-- desempenho por entropia;
-- desempenho por tipo de marcação;
-- custo dos soft constraints;
-- distribuição histórica de `max_run`, `mean_run` e `n_runs`;
-- desempenho com e sem penalidade de sequência top1.
-
----
-
-## Calibração das probabilidades
-
-Antes de otimizar o bilhete, é importante verificar se as probabilidades são calibradas.
-
-Métricas e técnicas candidatas:
+Métricas de interesse:
 
 ```text
+média de acertos
+frequência de 14
+frequência de 13+
+frequência de 12+
+frequência de 11+
 Brier Score
 Log Loss
 ECE
-Reliability bins
-Isotonic Regression
-Platt Scaling
-Temperature Scaling
+calibração por faixa
+custo dos soft constraints
+estabilidade
 ```
-
-O objetivo é evitar otimizar agressivamente probabilidades mal calibradas.
 
 ---
 
-## Arquitetura
+## Calibração e erro condicional
 
-Estrutura atual:
+As probabilidades devem ser avaliadas por faixa e por tipo de resultado.
+
+Exemplos:
 
 ```text
-.
-├── data/
-│   ├── concursos_anteriores.csv
-│   └── proximo_concurso.csv
-├── models/
-├── output/
-├── scripts/
-│   ├── common.py
-│   ├── constraints.py
-│   ├── metrics.py
-│   ├── preprocess_data.py
-│   ├── train_model.py
-│   ├── predict_results.py
-│   └── optimize_ticket.py
-└── main.py
+top1 35–40%
+top1 40–50%
+top1 50–60%
+top1 >60%
 ```
 
-Arquitetura planejada:
+Também devem ser estudadas relações condicionais como:
+
+```text
+P(top2_hit | gap12 < 0.05)
+P(top3_hit | entropia > 1.08)
+```
+
+Isso pode fornecer critérios históricos mais sólidos para alocar duplos e triplo.
+
+---
+
+## Configuração e reprodutibilidade
+
+Pesos, limiares e preferências devem migrar gradualmente para um arquivo como `config.yaml`.
+
+Exemplo:
+
+```yaml
+hard:
+  secos: 8
+  duplos: 5
+  triplos: 1
+  top1: 10
+  top2: 6
+  top3: 5
+
+soft:
+  target_outcomes: [9, 6, 6]
+  avoid_palmeiras: true
+  max_cost_palmeiras: 0.02
+  max_run_target: 6
+
+optimizer:
+  top_n_per_state: 50
+  objective: p13plus
+```
+
+Cada bilhete salvo deve registrar metadados suficientes para reprodução:
+
+```text
+strategy_version
+config_hash
+input_hash
+timestamp
+```
+
+---
+
+## Validador independente e testes invariantes
+
+Além do validador do otimizador, é desejável um módulo independente que confirme:
+
+```text
+14 jogos
+21 marcações
+8/5/1
+10/6/5
+Flamengo incluído quando aplicável
+probabilidades válidas
+```
+
+Também devem ser testadas invariantes probabilísticas:
+
+```text
+0 <= p(i) <= 1
+p(1) + p(X) + p(2) = 1
+P(14) <= P(13+) <= P(12+) <= P(11+) <= P(10+)
+```
+
+Casos especiais de teste:
+
+- empates de probabilidade e desempate `1 > 2 > X`;
+- Flamengo mandante e visitante;
+- Palmeiras mandante e visitante;
+- leitura de decimal com vírgula;
+- concurso sem solução válida;
+- probabilidades inválidas.
+
+---
+
+## Estrutura planejada do projeto
 
 ```text
 scripts/
@@ -613,25 +799,28 @@ scripts/
 ├── train_model.py
 ├── predict_results.py
 ├── optimize_ticket.py
-├── probability_metrics.py
-├── historical_patterns.py
+├── metrics.py
 ├── constraints.py
+├── historical_patterns.py
 ├── telemetry.py
+├── robustness.py
 ├── backtest.py
 ├── calibration.py
 └── validate_ticket.py
 ```
 
-Responsabilidades:
+Separação desejada:
 
 - **modelo** → estima probabilidades;
-- **otimizador** → monta o bilhete;
-- **probability_metrics** → calcula distribuição de acertos e métricas probabilísticas;
-- **historical_patterns** → mede runs, concentração e padrões históricos;
+- **otimizador** → gera candidatos e monta o bilhete;
+- **métricas** → calcula distribuição de acertos e métricas probabilísticas;
 - **constraints** → centraliza hard e soft constraints;
-- **telemetria** → explica decisões;
-- **backtest** → mede desempenho histórico sem vazamento temporal;
-- **validador** → verifica independentemente a integridade do bilhete.
+- **historical_patterns** → analisa runs, concentração e padrões históricos;
+- **telemetria** → explica decisões e contrafactuais;
+- **robustez** → mede estabilidade a perturbações;
+- **backtest** → valida a estratégia temporalmente;
+- **calibration** → calibra probabilidades;
+- **validate_ticket** → auditoria independente.
 
 ---
 
@@ -658,44 +847,87 @@ python main.py caminho/do/concurso.csv --output caminho/do/bilhete.csv
 
 ---
 
-## Roadmap
+## Telemetria
+
+Para cada partida, o terminal deve exibir pelo menos:
+
+```text
+JOGO 03 — TIME A x TIME B
+Probabilidades: 1=0.4012 X=0.3041 2=0.2946
+Ranking: top1=1 top2=X top3=2
+Entropia=1.088 gap12=0.0971 gap23=0.0095
+Escolha=X2 Tipo=DUPLO Cobertura=0.5988
+```
+
+Ao final:
+
+```text
+=========== DISTRIBUIÇÃO TOP1 ===========
+Jogos ordenados por p(top1): ...
+Top1 presente: ...
+Runs: ...
+Maior sequência: ...
+Média das sequências: ...
+Número de sequências: ...
+Concentração: ...
+
+=========== AUDITORIA FINAL ===========
+[OK] 8 secos, 5 duplos, 1 triplo, 21 marcações
+[OK] top1=10, top2=6, top3=5
+[OK/INFO] 1/X/2=... (alvo 9/6/6)
+[OK] Vitória do Flamengo incluída quando aplicável
+[OK/INFO] Vitória do Palmeiras excluída ou incluída com penalização
+P(14)=...
+P(13+)=...
+P(12+)=...
+E[acertos]=...
+Desvio-padrão=...
+Moda=...
+P(11+)=...
+P(10+)=...
+Solução válida: SIM
+```
+
+---
+
+## Roadmap priorizado
 
 ### Implementado
 
-- leitura das probabilidades `1/X/2`;
-- ranking `top1/top2/top3`;
-- desempate `1 > 2 > X`;
-- otimização global por programação dinâmica;
+- leitura das probabilidades `p(1)`, `p(X)`, `p(2)`;
+- ranking `top1/top2/top3` com desempate `1 > 2 > X`;
 - hard constraints `8/5/1` e `10/6/5`;
-- vitória do Flamengo obrigatória;
-- preferência `9/6/6`;
-- penalização da vitória do Palmeiras;
-- entropia e gaps;
-- cálculo exato de `P(14)`, `P(13+)` e `P(12+)`;
-- auditoria final;
-- exportação do bilhete;
-- estatísticas históricas de sequências de `top1_hit`;
-- telemetria de runs de top1 (maior run, média, quantidade e concentração);
-- `E[acertos]`, `P(11+)`, `P(10+)`, moda e desvio-padrão da distribuição exata.
+- obrigatoriedade da vitória do Flamengo;
+- soft constraints de Palmeiras e `9/6/6`;
+- otimização global por programação dinâmica;
+- cálculo exato de `P(14)`, `P(13+)`, `P(12+)`, `P(11+)` e `P(10+)`;
+- `E[acertos]`, moda e desvio-padrão;
+- telemetria de entropia, gaps e cobertura;
+- análise de runs e concentração dos top1;
+- auditoria automática do bilhete.
 
 ### Próximas prioridades
 
-1. penalidade suave de runs baseada no histórico;
-2. custo probabilístico para quebrar uma sequência;
-3. análise marginal de secos, duplos e triplo;
-4. custo de oportunidade dos soft constraints;
-5. backtest walk-forward comparando estratégias com e sem dispersão top1;
-6. otimização orientada diretamente a `P(13+)`.
+1. **DP Top-N + reranqueamento exato**;
+2. comparação de objetivos `p14`, `p13plus`, `p12plus` e `balanced`;
+3. custo de oportunidade dos soft constraints;
+4. custo de diversificação por `max_run`;
+5. análise marginal / contrafactual;
+6. múltiplas soluções quase ótimas;
+7. baseline combinatório correto para concentração de top1;
+8. backtest walk-forward;
+9. ablation tests.
 
 ### Evoluções posteriores
 
-- calibração das probabilidades;
 - robustez a perturbações;
-- múltiplas soluções quase ótimas;
-- configuração externa por `config.yaml`;
-- testes unitários e de integração;
-- validador independente;
-- comparação de múltiplos objetivos: `P(12+)`, `P(13+)`, `P(14)`.
+- estabilidade por jogo;
+- fronteira de Pareto;
+- calibração avançada;
+- análise de erro condicional;
+- `config.yaml`;
+- versionamento e reprodutibilidade;
+- suíte completa de testes automatizados.
 
 ---
 
@@ -703,19 +935,14 @@ python main.py caminho/do/concurso.csv --output caminho/do/bilhete.csv
 
 As probabilidades continuam sendo a base da estratégia, mas não devem determinar mecanicamente onde ficam secos, duplos e triplo.
 
-O projeto deve evitar dois extremos:
+O foco é encontrar a combinação de 21 marcações que produza o melhor bilhete possível sob as restrições definidas, mensurando explicitamente o custo das preferências e evitando confundir regularização útil com padrões estéticos.
 
-1. selecionar simplesmente as 21 maiores probabilidades;
-2. diversificar apenas para produzir um bilhete visualmente equilibrado.
-
-A diversificação só deve entrar quando houver justificativa histórica, ganho de robustez ou baixo custo de oportunidade.
-
-> **Não buscar apenas as 21 maiores probabilidades. Buscar a combinação de 21 marcações que produz o melhor bilhete possível sob as restrições definidas.**
+> Não buscar apenas as 21 maiores probabilidades. Buscar o melhor compromisso entre probabilidade, cobertura, estrutura, robustez e constraints — e conseguir explicar por que o bilhete escolhido venceu as alternativas.
 
 ---
 
 ## Status
 
-🚧 **Em desenvolvimento.**
+🚧 **Em desenvolvimento ativo.**
 
-O otimizador global já gera bilhetes válidos e auditáveis. As próximas etapas concentram-se em validar empiricamente os soft constraints, ampliar a telemetria e aproximar a função objetivo das probabilidades reais de premiação.
+O projeto já gera bilhetes válidos, calcula a distribuição probabilística de acertos e fornece telemetria suficiente para auditoria estrutural. A principal próxima evolução é ampliar a busca com **DP Top-N + reranqueamento exato**, permitindo escolher o bilhete final pelas métricas globais que realmente importam.
