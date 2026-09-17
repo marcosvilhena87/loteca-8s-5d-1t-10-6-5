@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +49,8 @@ def read_matches(path: str | Path) -> list[Match]:
             "X": _decimal(row["p(x)"]),
             "2": _decimal(row["p(2)"]),
         }
+        if any(not math.isfinite(value) or value < 0 or value > 1 for value in probabilities.values()):
+            raise ValueError(f"Jogo {row['Jogo']}: probabilidades devem estar entre 0 e 1")
         total = sum(probabilities.values())
         if abs(total - 1.0) > 1e-5:
             raise ValueError(f"Jogo {row['Jogo']}: probabilidades somam {total:.6f}, não 1")
