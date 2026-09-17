@@ -673,18 +673,19 @@ python main.py caminho/do/concurso.csv --output caminho/do/bilhete.csv
 - entropia e gaps;
 - cálculo exato de `P(14)`, `P(13+)` e `P(12+)`;
 - auditoria final;
-- exportação do bilhete.
+- exportação do bilhete;
+- estatísticas históricas de sequências de `top1_hit`;
+- telemetria de runs de top1 (maior run, média, quantidade e concentração);
+- `E[acertos]`, `P(11+)`, `P(10+)`, moda e desvio-padrão da distribuição exata.
 
 ### Próximas prioridades
 
-1. estatísticas históricas das sequências de `top1_hit`;
-2. telemetria de `max_run`, `mean_run`, `n_runs` e concentração;
-3. penalidade suave de runs baseada no histórico;
-4. custo probabilístico para quebrar uma sequência;
-5. análise marginal de secos, duplos e triplo;
-6. custo de oportunidade dos soft constraints;
-7. backtest walk-forward comparando estratégias com e sem dispersão top1;
-8. otimização orientada diretamente a `P(13+)`.
+1. penalidade suave de runs baseada no histórico;
+2. custo probabilístico para quebrar uma sequência;
+3. análise marginal de secos, duplos e triplo;
+4. custo de oportunidade dos soft constraints;
+5. backtest walk-forward comparando estratégias com e sem dispersão top1;
+6. otimização orientada diretamente a `P(13+)`.
 
 ### Evoluções posteriores
 

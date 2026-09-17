@@ -19,7 +19,8 @@ from .constraints import (
     ticket_counts,
     validate_constraints,
 )
-from .metrics import probability_at_least
+from .historical_patterns import historical_top1_runs, ticket_top1_runs
+from .metrics import hit_distribution, probability_at_least
 
 
 @dataclass(frozen=True)
@@ -123,11 +124,37 @@ def report(ticket: Ticket) -> str:
                       f"Escolha={''.join(x for x in OUTCOMES if x in selection)} Tipo={( 'SECO','DUPLO','TRIPLO')[len(selection)-1]} Cobertura={coverage:.4f}", ""))
     sizes, ranks, outcomes = counts(ticket)
     palmeiras = all(not (is_team(m, "PALMEIRAS/SP") and team_win(m, "PALMEIRAS/SP") in s) for m, s in zip(ticket.matches, ticket.selections))
-    lines.extend(("=========== AUDITORIA FINAL ===========", f"[OK] {sizes[0]} secos, {sizes[1]} duplos, {sizes[2]} triplo, 21 marcações",
+    numbers, sequence, run_data = ticket_top1_runs(ticket.matches, ticket.selections)
+    history = historical_top1_runs(Path(__file__).parents[1] / "data/concursos_anteriores.csv")
+    lines.extend(("=========== DISTRIBUIÇÃO TOP1 ===========",
+                  "Jogos ordenados por p(top1): " + " ".join(f"{number:02d}" for number in numbers),
+                  "Top1 presente:              " + "  ".join("1" if value else "0" for value in sequence),
+                  "Runs: " + (" / ".join(map(str, run_data.runs)) or "nenhuma"),
+                  f"Maior sequência: {run_data.max_run}",
+                  f"Média das sequências: {run_data.mean_run:.2f}",
+                  f"Número de sequências: {run_data.n_runs}",
+                  f"Concentração: {run_data.concentration}",
+                  f"Mediana histórica max_run: {history.median_max_run:.1f} ({history.contests} concursos)",
+                  f"P histórico(max_run >= atual): {history.tail_probability(run_data.max_run):.2%}", "",
+                  "=========== AUDITORIA FINAL ===========", f"[OK] {sizes[0]} secos, {sizes[1]} duplos, {sizes[2]} triplo, 21 marcações",
                   f"[OK] top1={ranks[0]}, top2={ranks[1]}, top3={ranks[2]}", f"[{'OK' if outcomes == TARGET_OUTCOMES else 'INFO'}] 1/X/2={outcomes[0]}/{outcomes[1]}/{outcomes[2]} (alvo 9/6/6)",
                   "[OK] Vitória do Flamengo incluída quando aplicável", f"[{'OK' if palmeiras else 'INFO'}] Vitória do Palmeiras {'excluída' if palmeiras else 'incluída com penalização'}",
-                  f"P(14)={ticket.probability_at_least(14):.6%} P(13+)={ticket.probability_at_least(13):.6%} P(12+)={ticket.probability_at_least(12):.6%}", "Solução válida: SIM"))
+                  f"P(14)={ticket.probability_at_least(14):.6%} P(13+)={ticket.probability_at_least(13):.6%} P(12+)={ticket.probability_at_least(12):.6%}",
+                  probability_summary(ticket), "Solução válida: SIM"))
     return "\n".join(lines)
+
+
+def probability_summary(ticket: Ticket) -> str:
+    """Resume a distribuição exata de acertos além das faixas de premiação."""
+    distribution = hit_distribution(ticket.coverage)
+    expected = sum(hits * probability for hits, probability in enumerate(distribution))
+    variance = sum((hits - expected) ** 2 * probability for hits, probability in enumerate(distribution))
+    mode = max(range(len(distribution)), key=distribution.__getitem__)
+    return (
+        f"E[acertos]={expected:.3f} Desvio-padrão={math.sqrt(variance):.3f} "
+        f"Moda={mode} P(11+)={sum(distribution[11:]):.6%} "
+        f"P(10+)={sum(distribution[10:]):.6%}"
+    )
 
 
 def main() -> None:

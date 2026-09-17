@@ -4,7 +4,8 @@ from dataclasses import replace
 from scripts.common import rank_probabilities, read_matches
 from scripts.constraints import constraint_errors, team_win
 from scripts.metrics import hit_distribution, probability_at_least
-from scripts.optimize_ticket import TARGET_RANKS, TARGET_SIZES, counts, optimize, validate
+from scripts.historical_patterns import historical_top1_runs, run_stats, ticket_top1_runs
+from scripts.optimize_ticket import TARGET_RANKS, TARGET_SIZES, counts, optimize, report, validate
 
 
 class OptimizerTest(unittest.TestCase):
@@ -46,6 +47,30 @@ class OptimizerTest(unittest.TestCase):
     def test_probability_metric_rejects_invalid_coverage(self):
         with self.assertRaisesRegex(ValueError, "Cobertura inválida"):
             hit_distribution([1.01])
+
+    def test_run_statistics_include_terminal_run(self):
+        stats = run_stats((True, True, False, True, False, True, True, True))
+        self.assertEqual(stats.runs, (2, 1, 3))
+        self.assertEqual(stats.max_run, 3)
+        self.assertEqual(stats.n_runs, 3)
+        self.assertEqual(stats.concentration, 14)
+        self.assertEqual(stats.mean_run, 2.0)
+
+    def test_historical_and_ticket_run_telemetry(self):
+        history = historical_top1_runs("data/concursos_anteriores.csv")
+        self.assertGreater(history.contests, 0)
+        self.assertGreaterEqual(history.tail_probability(1), 0.0)
+        self.assertLessEqual(history.tail_probability(1), 1.0)
+
+        ticket = optimize(read_matches("data/proximo_concurso.csv"))
+        numbers, sequence, stats = ticket_top1_runs(ticket.matches, ticket.selections)
+        self.assertEqual(len(numbers), 14)
+        self.assertEqual(sum(sequence), 10)
+        self.assertEqual(sum(stats.runs), 10)
+        telemetry = report(ticket)
+        self.assertIn("DISTRIBUIÇÃO TOP1", telemetry)
+        self.assertIn("P histórico(max_run >= atual)", telemetry)
+        self.assertIn("E[acertos]", telemetry)
 
 
 if __name__ == "__main__":
